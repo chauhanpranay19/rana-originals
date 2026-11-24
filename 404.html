@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en-IN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rana Originals</title>
+<script>
+/* Item links look like .../p/<id>/. An item added after the share pages were last built has no page yet,
+   so it lands here; send it to the shop's own page for that item. Anything else goes to the shop. */
+(function () {
+  var path = location.pathname, m = path.match(/^(.*\/)p\/([A-Za-z0-9_-]+)\/?$/);
+  if (m) { location.replace(m[1] + '#/p/' + m[2]); return; }
+  var seg = path.split('/');
+  location.replace(/\.github\.io$/.test(location.hostname) && seg[1] ? '/' + seg[1] + '/' : '/');
+})();
+</script>
+</head>
+<body><a href="./">Rana Originals</a></body>
+</html>

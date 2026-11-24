@@ -134,7 +134,7 @@
   function fmtPhone(p) { var t = tenDigits(p); return t.length === 10 ? t.slice(0, 5) + ' ' + t.slice(5) : p; }
   function groupUtr(u) { return String(u || '').replace(/(\d{4})(?=\d)/g, '$1 '); }
   function waTo(phone, text) { return 'https://wa.me/91' + tenDigits(phone) + '?text=' + encodeURIComponent(text); }
-  function itemLink(id) { try { return new URL('../#/p/' + encodeURIComponent(id), location.href).href; } catch (e) { return ''; } }
+  function itemLink(id) { try { var base = (window.RO_CONFIG && window.RO_CONFIG.siteUrl) || new URL('../', location.href).href; return base + 'p/' + encodeURIComponent(id) + '/'; } catch (e) { return ''; } }
   function pname(p) { return ((p.brand ? p.brand + ' ' : '') + (p.title || '')).trim(); }
   /* short name for narrow rows: drop the brand, then filler words, when the full name is long */
   function shortName(p) {
@@ -299,7 +299,9 @@
       });
     }, function (e) { S.busy.bulk = false; render(); toast(errMsg(e)); });
   }
-  function waMsg(o) {
+  /* Every message about an order ends with the item's link, so WhatsApp shows its picture. */
+  function waMsg(o) { var i = (o.items || [])[0], l = i && i.productId ? itemLink(i.productId) : ''; return waMsgText(o) + (l ? '\n' + l : ''); }
+  function waMsgText(o) {
     var n = (o.customer.name || '').split(' ')[0] || 'there', i = o.items[0] || {}, what = pname(i) + (i.size ? ' (' + i.size + ')' : '');
     switch (o.status) {
       case 'verifying': return o.stockIssue ? 'Hi ' + n + ', sorry, ' + what + ' sold out before your payment came. We will refund ' + money(o.amount) + ' to your UPI.' : 'Hi ' + n + ', we got your order for ' + what + '. Checking your payment of ' + money(o.amount) + ' now.';

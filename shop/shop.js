@@ -91,17 +91,14 @@
     return '<svg class="ic ' + (cls || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[name] + '</svg>';
   }
   function waHref(text) { return esc(Store.waLink(text)); }
-  /* WhatsApp links cannot attach a picture, so the message carries the photo's link first
-     (WhatsApp turns the first link into a picture preview) and then the item's page. */
-  function askExtras(p) {
-    var out = '';
-    try {
-      var ph = photosOf(p)[0];
-      if (ph && ph.indexOf('data:') !== 0) out += '\n' + new URL(ph, document.baseURI).href;
-      out += '\n' + location.href.split('#')[0].replace(/\?.*$/, '') + '#/p/' + encodeURIComponent(p.id);
-    } catch (e) {}
-    return out;
+  /* WhatsApp links cannot attach a picture, so the message carries the item's own small page (
+     WhatsApp shows a picture preview for it). */
+  function shareLink(id) {
+    var base = (window.RO_CONFIG && window.RO_CONFIG.siteUrl) || location.href.split('#')[0].replace(/\?.*$/, '').replace(/shop\/index\.html$/, '');
+    return base + 'p/' + encodeURIComponent(id) + '/';
   }
+  function askExtras(p) { return p && p.id ? '\n' + shareLink(p.id) : ''; }
+  function orderExtras(o) { var i = o && o.items && o.items[0]; return i && i.productId ? '\n' + shareLink(i.productId) : ''; }
   function helpBtn(text) {
     return '<a class="btn btn-wa-line" href="' + waHref(text) + '" target="_blank" rel="noopener">' + ic('wa') + 'Help on WhatsApp</a>';
   }
@@ -357,7 +354,7 @@
       '<div class="qr-box"><div id="qr" data-link="' + esc(link) + '"></div><span class="qr-cap">Or scan with any UPI app</span></div>' +
       '<form class="form" data-form="utr" data-id="' + esc(o.id) + '" novalidate>' + utrField('UPI reference, after paying') +
       '<button class="btn btn-line" type="submit"' + busyAttr('utr') + '>' + busyLabel('utr', 'I have paid') + '</button></form>' +
-      '<a class="quiet-link" href="' + waHref('Hi, I need help paying for order ' + o.id + '.') + '" target="_blank" rel="noopener">' + ic('wa') + 'Help on WhatsApp</a>' +
+      '<a class="quiet-link" href="' + waHref('Hi, I need help paying for order ' + o.id + '.' + orderExtras(o)) + '" target="_blank" rel="noopener">' + ic('wa') + 'Help on WhatsApp</a>' +
       '</div>';
     return page(r, body, { back: true, cls: 'pay-page' });
   }
@@ -471,7 +468,7 @@
       (s.extra || '') +
       (s.reveal ? '<button class="btn btn-line" data-act="show-utr">Already paid? Enter reference</button>' : '') +
       (s.utr ? '<form class="form" data-form="utr" data-id="' + esc(o.id) + '" novalidate>' + utrField('UPI reference') + '<button class="btn btn-dark" type="submit"' + busyAttr('utr') + '>' + esc(busyLabel('utr', s.utr)) + '</button></form>' : '') +
-      helpBtn('Hi, I need help with my order ' + o.id + '.') +
+      helpBtn('Hi, I need help with my order ' + o.id + '.' + orderExtras(o)) +
       '</div>';
     return page(r, body, { back: true, tabbar: true, cls: 'order' });
   }
