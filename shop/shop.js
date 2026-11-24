@@ -91,6 +91,17 @@
     return '<svg class="ic ' + (cls || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[name] + '</svg>';
   }
   function waHref(text) { return esc(Store.waLink(text)); }
+  /* WhatsApp links cannot attach a picture, so the message carries the photo's link first
+     (WhatsApp turns the first link into a picture preview) and then the item's page. */
+  function askExtras(p) {
+    var out = '';
+    try {
+      var ph = photosOf(p)[0];
+      if (ph && ph.indexOf('data:') !== 0) out += '\n' + new URL(ph, document.baseURI).href;
+      out += '\n' + location.href.split('#')[0].replace(/\?.*$/, '') + '#/p/' + encodeURIComponent(p.id);
+    } catch (e) {}
+    return out;
+  }
   function helpBtn(text) {
     return '<a class="btn btn-wa-line" href="' + waHref(text) + '" target="_blank" rel="noopener">' + ic('wa') + 'Help on WhatsApp</a>';
   }
@@ -224,9 +235,9 @@
     let actions;
     if (ask) {
       actions = total === 0 ? '<button class="btn btn-dark" disabled>Sold out</button>'
-        : '<a class="btn btn-wa" href="' + waHref('Hi, what is the price of ' + fullName(p) + sizeTxt + '?') + '" target="_blank" rel="noopener">' + ic('wa') + 'Ask price on WhatsApp</a>';
+        : '<a class="btn btn-wa" href="' + waHref('Hi, what is the price of ' + fullName(p) + sizeTxt + '?' + askExtras(p)) + '" target="_blank" rel="noopener">' + ic('wa') + 'Ask price on WhatsApp</a>';
     } else {
-      actions = '<a class="btn btn-icon" href="' + waHref('Hi, I have a question about ' + fullName(p) + sizeTxt + '.') + '" target="_blank" rel="noopener" aria-label="Ask on WhatsApp">' + ic('wa') + '</a>' +
+      actions = '<a class="btn btn-icon" href="' + waHref('Hi, I have a question about ' + fullName(p) + sizeTxt + '.' + askExtras(p)) + '" target="_blank" rel="noopener" aria-label="Ask on WhatsApp">' + ic('wa') + '</a>' +
         (total === 0 ? '<button class="btn btn-dark" disabled>Sold out</button>'
           : '<button class="btn btn-dark" data-act="buy" data-id="' + esc(p.id) + '"' + busyAttr('buy') + '>' + busyLabel('buy', 'Buy now') + '</button>');
     }
