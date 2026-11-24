@@ -3,5 +3,5 @@
    apiUrl filled = real shop: paste the Apps Script web app URL (ends in /exec), see backend/README.md.
    demo.html always stays in demo mode, whatever is set here. */
 window.RO_CONFIG = {
-  apiUrl: ''
+  apiUrl: 'https://script.google.com/macros/s/AKfycbw4PkzPwnPyNdtCRRbMdcO11Q17XOrUqxG8vqVc7r8HDEhpvy5y_OaWpvalnquMYGLzzQ/exec'
 };
