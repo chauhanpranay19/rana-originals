@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rana Originals · Demo view</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<style>
+  body { background: #F4F4F2; }
+  header { display: flex; align-items: center; gap: 16px; padding: 18px 24px; flex-wrap: wrap; }
+  .brand { font-family: var(--font-brand); font-size: 24px; font-weight: 700; letter-spacing: .2px; }
+  .tag { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; background: var(--card); }
+  .hint { color: var(--muted); font-size: 14px; flex: 1; min-width: 220px; }
+  header button { border: 1px solid var(--line); background: var(--card); border-radius: 99px; padding: 10px 16px; min-height: 44px; }
+  .tabs { display: none; gap: 8px; padding: 0 16px 12px; }
+  .tabs button { flex: 1; min-height: 44px; border-radius: 99px; border: 1px solid var(--line); background: var(--card); }
+  .tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  main { display: flex; justify-content: center; gap: 48px; padding: 8px 24px 40px; flex-wrap: wrap; }
+  figure { margin: 0; text-align: center; }
+  figcaption { font-weight: 600; margin-bottom: 4px; }
+  figcaption small { display: block; font-weight: 400; color: var(--muted); }
+  .phone { margin-top: 12px; width: 414px; height: 800px; border-radius: 44px; padding: 12px; background: #16130F; box-shadow: 0 30px 60px rgba(22,19,15,.25); }
+  .phone iframe { width: 100%; height: 100%; border: 0; border-radius: 32px; background: var(--bg); }
+  @media (max-width: 920px) {
+    .tabs { display: flex; }
+    main { padding: 0; gap: 0; }
+    figcaption { display: none; }
+    figure { width: 100%; display: none; }
+    figure.on { display: block; }
+    .phone { width: 100%; height: calc(100vh - 150px); border-radius: 0; padding: 0; margin: 0; box-shadow: none; }
+    .phone iframe { border-radius: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="ro-logo">RANA <span>originals</span></span><span class="tag">Demo</span>
+  <span class="hint"><b>1.</b> Left: tap an item, a size, Buy now, then pay. &nbsp; <b>2.</b> Right: tick the order, Money received. &nbsp; <b>3.</b> Right: Add an item and watch it appear on the left.</span>
+  <button id="reset">Reset demo</button>
+</header>
+<div class="tabs"><button data-t="shop" class="on">Customer</button><button data-t="admin">Atul</button></div>
+<main>
+  <figure id="f-shop" class="on">
+    <figcaption>Customer's phone<small>What buyers see</small></figcaption>
+    <div class="phone"><iframe src="shop/index.html" title="Customer shop"></iframe></div>
+  </figure>
+  <figure id="f-admin">
+    <figcaption>Atul's phone<small>Where he adds stock and checks payments</small></figcaption>
+    <div class="phone"><iframe src="admin/index.html" title="Seller admin"></iframe></div>
+  </figure>
+</main>
+<script src="assets/store.js"></script>
+<script>
+  document.getElementById('reset').onclick = function () {
+    Store.reset();
+    document.querySelectorAll('iframe').forEach(function (f) { f.contentWindow.location.reload(); });
+  };
+  document.querySelectorAll('.tabs button').forEach(function (b) {
+    b.onclick = function () {
+      document.querySelectorAll('.tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      document.getElementById('f-shop').classList.toggle('on', b.dataset.t === 'shop');
+      document.getElementById('f-admin').classList.toggle('on', b.dataset.t === 'admin');
+    };
+  });
+</script>
+</body>
+</html>
