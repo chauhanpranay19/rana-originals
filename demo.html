@@ -42,14 +42,15 @@
 <main>
   <figure id="f-shop" class="on">
     <figcaption>Customer's phone<small>What buyers see</small></figcaption>
-    <div class="phone"><iframe src="shop/index.html" title="Customer shop"></iframe></div>
+    <div class="phone"><iframe src="shop/index.html?demo=1" title="Customer shop"></iframe></div>
   </figure>
   <figure id="f-admin">
     <figcaption>Atul's phone<small>Where he adds stock and checks payments</small></figcaption>
-    <div class="phone"><iframe src="admin/index.html" title="Seller admin"></iframe></div>
+    <div class="phone"><iframe src="admin/index.html?demo=1" title="Seller admin"></iframe></div>
   </figure>
 </main>
-<script src="assets/store.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/store.js" data-demo="1"></script>
 <script>
   document.getElementById('reset').onclick = function () {
     Store.reset();

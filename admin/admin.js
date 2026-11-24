@@ -163,10 +163,39 @@
     clearTimeout(closeT); closeT = setTimeout(function () { root.hidden = true; root.innerHTML = ''; flush(); }, 230);
   }
   function sheetOpen() { return !$('#sheet').hidden; }
+  /* Waiting for the server: a button that cannot be tapped twice, and a short message if it fails. */
+  function errMsg(e) {
+    var c = e && e.code;
+    return c === 'network' ? 'No connection. Please try again.'
+      : c === 'unauthorized' ? 'Please enter the passcode again.'
+        : c === 'busy' ? 'Busy right now. Please try again.'
+          : c === 'out_of_stock' ? 'Just sold out.'
+            : c === 'too_many_photos' ? 'Too many photos. Use 20 or fewer.'
+              : c === 'photo_too_big' ? 'A photo is too big.'
+                : 'Something went wrong. Please try again.';
+  }
+  function busyBtn(btn, label) {
+    if (!btn) return function () {};
+    var old = btn.innerHTML; btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    btn.textContent = label || 'Saving…';
+    return function () { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.innerHTML = old; };
+  }
+  function sheetErr(e) {
+    var err = $('#sErr');
+    if (err && sheetOpen()) { err.textContent = errMsg(e); err.hidden = false; } else toast(errMsg(e));
+  }
+  /* r: what the action returned. A Promise keeps the sheet open (button busy) until it is done. */
+  function finish(btn, r) {
+    if (!r || typeof r.then !== 'function') { closeSheet(); return; }
+    var undo = busyBtn(btn);
+    var err = $('#sErr'); if (err) err.hidden = true;
+    r.then(function () { closeSheet(); }, function (e) { undo(); sheetErr(e); });
+  }
   function confirmSheet(o, cb) {
     sheet('<h3>' + esc(o.title) + '</h3>' + (o.text ? '<p>' + esc(o.text) + '</p>' : '') +
+      '<div class="err" id="sErr" hidden></div>' +
       '<div class="btns"><button class="btn ghost sm" data-act="close">Cancel</button><button class="btn sm ' + (o.danger ? 'danger' : '') + '" id="sOk">' + esc(o.ok) + '</button></div>',
-      function (el) { el.querySelector('#sOk').onclick = function () { closeSheet(); cb(); }; });
+      function (el) { var ok = el.querySelector('#sOk'); ok.onclick = function () { if (!ok.disabled) finish(ok, cb()); }; });
   }
   /* o: title, text, value, numeric, ok, required, validate(v), extra:{label, cb} */
   function inputSheet(o, cb) {
@@ -179,14 +208,16 @@
       function (el) {
         var inp = el.querySelector('#sIn'), err = el.querySelector('#sErr');
         if (o.numeric) inp.addEventListener('input', function () { var c = inp.value.replace(/\D/g, ''); if (c !== inp.value) inp.value = c; });
+        var okBtn = el.querySelector('#sOk');
         function go() {
+          if (okBtn.disabled) return;
           var v = inp.value.trim();
           var m = o.validate ? o.validate(v) : (o.required && !v ? 'Please fill this in' : '');
           if (m) { err.textContent = m; err.hidden = false; return; }
-          closeSheet(); cb(v);
+          finish(okBtn, cb(v));
         }
-        el.querySelector('#sOk').onclick = go;
-        if (o.extra) el.querySelector('#sExtra').onclick = function () { closeSheet(); o.extra.cb(); };
+        okBtn.onclick = go;
+        if (o.extra) { var ex = el.querySelector('#sExtra'); ex.onclick = function () { if (!ex.disabled) finish(ex, o.extra.cb()); }; }
         inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
         setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 240);
       });
@@ -200,7 +231,8 @@
   }
 
   /* ---------- state ---------- */
-  var S = { tab: 'orders', filter: 'new', ticked: {}, addMode: 'one' };
+  var S = { tab: 'orders', filter: 'new', ticked: {}, addMode: 'one', busy: {}, pass: '', loginErr: '' };
+  function busyAttr(key) { return S.busy[key] ? ' disabled aria-busy="true"' : ''; }
   var uid = 0;
   function blankOne() { return { photos: [], msg: '', fix: {}, qty: {} }; }
   function blankMany() { return { photos: [], starts: {}, msgs: {}, fixes: {}, step: 'photos' }; }
@@ -242,24 +274,30 @@
         return '<button class="tile ' + (S.filter === t[0] ? 'on' : '') + '" data-act="filter" data-v="' + t[0] + '" aria-pressed="' + (S.filter === t[0]) + '"><b>' + cnt[t[0]] + '</b>' + t[1] + '</button>';
       }).join('') + '</div>';
     if (cnt.problems) h += '<button class="problink ' + (S.filter === 'problems' ? 'on' : '') + '" data-act="filter" data-v="problems">' + ic('alert', 18) + 'Problems (' + cnt.problems + ')</button>';
-    if (!list.length) h += empty('orders', { new: 'No new orders.', send: 'Nothing to send.', done: 'No finished orders yet.', problems: 'No problems.' }[S.filter]);
+    var wait = Store.status();
+    if (!list.length && !wait.ordersLoaded) h += empty('orders', wait.error === 'network' ? 'No connection. Trying again…' : 'Loading orders…');
+    else if (!list.length) h += empty('orders', { new: 'No new orders.', send: 'Nothing to send.', done: 'No finished orders yet.', problems: 'No problems.' }[S.filter]);
     else h += '<div class="stack">' + list.map(orderRow).join('') + '</div>';
     if ((S.filter === 'new' || S.filter === 'send') && Object.keys(ids).length) {
       var n = Object.keys(S.ticked).length;
       var label = S.filter === 'new' ? (n ? 'Money received for ' + n : 'Tick the paid ones') : (n ? 'Mark ' + n + ' sent' : 'Tick the sent ones');
-      h += '<div class="actbar"><button class="btn" data-act="bulk" ' + (n ? '' : 'disabled') + '>' + label + '</button></div>';
+      if (S.busy.bulk) label = 'Saving…';
+      h += '<div class="actbar"><button class="btn" data-act="bulk" ' + (n && !S.busy.bulk ? '' : 'disabled') + (S.busy.bulk ? ' aria-busy="true"' : '') + '>' + label + '</button></div>';
     }
     return h;
   }
   function bulk() {
-    var ids = Object.keys(S.ticked); if (!ids.length) return;
+    var ids = Object.keys(S.ticked); if (!ids.length || S.busy.bulk) return;
     var from = S.filter === 'new' ? 'verifying' : 'confirmed', to = S.filter === 'new' ? 'confirmed' : 'shipped';
     var done = ids.filter(function (id) { var o = Store.getOrder(id); return o && o.status === from && !(to === 'confirmed' && o.stockIssue); });
-    done.forEach(function (id) { Store.setOrderStatus(id, to, to === 'confirmed' ? 'Money received' : 'Sent'); });
-    S.ticked = {}; render();
-    toast(to === 'confirmed' ? plural(done.length, 'order', 'orders') + ' paid' : plural(done.length, 'order', 'orders') + ' sent', function () {
-      done.forEach(function (id) { var o = Store.getOrder(id); if (o && o.status === to) Store.setOrderStatus(id, from, 'Undo'); });
-    });
+    S.busy.bulk = true; render();
+    Store.setOrderStatus(done, to, to === 'confirmed' ? 'Money received' : 'Sent').then(function () {
+      S.busy.bulk = false; S.ticked = {}; render();
+      toast(to === 'confirmed' ? plural(done.length, 'order', 'orders') + ' paid' : plural(done.length, 'order', 'orders') + ' sent', function () {
+        var back = done.filter(function (id) { var o = Store.getOrder(id); return o && o.status === to; });
+        Store.setOrderStatus(back, from, 'Undo').catch(function (e) { toast(errMsg(e)); });
+      });
+    }, function (e) { S.busy.bulk = false; render(); toast(errMsg(e)); });
   }
   function waMsg(o) {
     var n = (o.customer.name || '').split(' ')[0] || 'there', i = o.items[0] || {}, what = pname(i) + (i.size ? ' (' + i.size + ')' : '');
@@ -295,25 +333,30 @@
       (o.utr ? '<div>UPI ref <b class="utr">' + groupUtr(o.utr) + '</b></div>' : '') +
       '<div>' + esc(c.address || '') + (c.pincode ? ', ' + esc(c.pincode) : '') + '</div>' +
       '<div><a href="tel:+91' + esc(tenDigits(c.phone)) + '">' + esc(fmtPhone(c.phone)) + '</a></div></div>' +
+      '<div class="err" id="sErr" hidden></div>' +
       '<div class="stack"><a class="btn wa sm" target="_blank" rel="noopener" href="' + esc(waTo(c.phone, waMsg(o))) + '">' + ic('wa', 22) + 'WhatsApp customer</a>' + acts.join('') + '</div>';
     sheet(h, function (el) {
-      el.querySelectorAll('[data-oact]').forEach(function (b) { b.onclick = function () { orderAct(b.dataset.oact, o.id); }; });
+      el.querySelectorAll('[data-oact]').forEach(function (b) { b.onclick = function () { if (!b.disabled) orderAct(b.dataset.oact, o.id, b); }; });
     });
   }
-  function setSt(id, st, note, msg) { Store.setOrderStatus(id, st, note); closeSheet(); toast(msg); }
-  function orderAct(act, id) {
+  // change status with the sheet still open; close it (and say so) once it worked
+  function setSt(id, st, note, msg) { return Store.setOrderStatus(id, st, note).then(function () { toast(msg); }); }
+  function orderAct(act, id, btn) {
     var o = Store.getOrder(id); if (!o) return;
-    if (act === 'recv') setSt(id, 'confirmed', 'Money received', 'Marked paid');
-    else if (act === 'ship') setSt(id, 'shipped', 'Sent', 'Marked sent');
-    else if (act === 'deliv') setSt(id, 'delivered', '', 'Marked delivered');
-    else if (act === 'nf') confirmSheet({ title: 'Money not received?', text: 'The piece goes back to stock.', ok: 'Not received', danger: true }, function () { Store.setOrderStatus(id, 'payment_not_found', 'Money not found'); toast('Marked not received'); });
-    else if (act === 'wrong') inputSheet({ title: 'Wrong amount', text: 'Expected ' + money(o.amount) + '. How much came in?', numeric: true, required: true, ok: 'Save' }, function (v) { Store.setOrderStatus(id, 'amount_mismatch', 'Received ' + money(+v) + ', expected ' + money(o.amount)); toast('Marked wrong amount'); });
-    else if (act === 'refund') confirmSheet({ title: 'Refund ' + money(o.amount) + '?', text: 'Marks the order as refund due.', ok: 'Refund due', danger: true }, function () { Store.setOrderStatus(id, 'refund_due', o.stockIssue ? 'Paid after it sold out' : 'Refund to customer'); toast('Marked refund due'); });
-    else if (act === 'refunded') inputSheet({ title: 'Mark refunded', text: 'Refund reference from your UPI app', numeric: true, required: true, ok: 'Mark refunded' }, function (v) { Store.setOrderStatus(id, 'refunded', v); toast('Marked refunded'); });
+    if (act === 'recv') finish(btn, setSt(id, 'confirmed', 'Money received', 'Marked paid'));
+    else if (act === 'ship') finish(btn, setSt(id, 'shipped', 'Sent', 'Marked sent'));
+    else if (act === 'deliv') finish(btn, setSt(id, 'delivered', '', 'Marked delivered'));
+    else if (act === 'nf') confirmSheet({ title: 'Money not received?', text: 'The piece goes back to stock.', ok: 'Not received', danger: true }, function () { return setSt(id, 'payment_not_found', 'Money not found', 'Marked not received'); });
+    else if (act === 'wrong') inputSheet({ title: 'Wrong amount', text: 'Expected ' + money(o.amount) + '. How much came in?', numeric: true, required: true, ok: 'Save' }, function (v) { return setSt(id, 'amount_mismatch', 'Received ' + money(+v) + ', expected ' + money(o.amount), 'Marked wrong amount'); });
+    else if (act === 'refund') confirmSheet({ title: 'Refund ' + money(o.amount) + '?', text: 'Marks the order as refund due.', ok: 'Refund due', danger: true }, function () { return setSt(id, 'refund_due', o.stockIssue ? 'Paid after it sold out' : 'Refund to customer', 'Marked refund due'); });
+    else if (act === 'refunded') inputSheet({ title: 'Mark refunded', text: 'Refund reference from your UPI app', numeric: true, required: true, ok: 'Mark refunded' }, function (v) { return setSt(id, 'refunded', v, 'Marked refunded'); });
     else if (act === 'late') {
-      if (!canRestock(o)) { confirmSheet({ title: 'Item has sold out', text: 'Refund this customer instead.', ok: 'Refund due', danger: true }, function () { Store.setOrderStatus(id, 'refund_due', 'Paid after it sold out'); toast('Marked refund due'); }); return; }
-      if (!o.stockHeld) { var r = Store.submitUtr(o.id, o.utr); if (!r.order || r.order.stockIssue) { closeSheet(); toast('Could not hold the item. Refund instead.'); return; } }
-      setSt(id, 'confirmed', 'Money received after all', 'Marked paid');
+      if (!canRestock(o)) { confirmSheet({ title: 'Item has sold out', text: 'Refund this customer instead.', ok: 'Refund due', danger: true }, function () { return setSt(id, 'refund_due', 'Paid after it sold out', 'Marked refund due'); }); return; }
+      var hold = o.stockHeld ? Promise.resolve(true) : Store.submitUtr(o.id, o.utr).then(function (r) { return !!(r.order && !r.order.stockIssue); });
+      finish(btn, hold.then(function (ok) {
+        if (!ok) { toast('Could not hold the item. Refund instead.'); return; }
+        return setSt(id, 'confirmed', 'Money received after all', 'Marked paid');
+      }));
     }
   }
 
@@ -326,15 +369,24 @@
       '<div class="field"><label class="lbl" for="stWa">WhatsApp number</label><input class="inp" id="stWa" inputmode="tel" value="' + esc(tenDigits(st.whatsapp)) + '" autocomplete="off"></div>' +
       '<div class="err" id="stErr" hidden></div>' +
       '<div class="stack"><button class="btn sm" id="stSave">Save</button><button class="btn ghost sm" data-act="close">Cancel</button>' +
-      '<button class="link danger-link" id="stReset">Reset demo data</button></div>',
+      (Store.remote ? '<button class="link danger-link" id="stOut">Log out</button></div>' : '<button class="link danger-link" id="stReset">Reset demo data</button></div>'),
       function (el) {
-        el.querySelector('#stSave').onclick = function () {
+        var saveBtn = el.querySelector('#stSave');
+        saveBtn.onclick = function () {
+          if (saveBtn.disabled) return;
           var wa = tenDigits(el.querySelector('#stWa').value), upi = el.querySelector('#stUpi').value.trim(), err = el.querySelector('#stErr');
           var m = !/^[\w.\-]+@[\w.\-]+$/.test(upi) ? 'Check the UPI ID, it looks like name@bank' : wa.length !== 10 ? 'Enter a 10 digit WhatsApp number' : '';
           if (m) { err.textContent = m; err.hidden = false; return; }
-          Store.saveSettings({ upiId: upi, payeeName: el.querySelector('#stName').value.trim(), whatsapp: '91' + wa });
-          closeSheet(); toast('Saved');
+          err.hidden = true;
+          var undo = busyBtn(saveBtn);
+          Store.saveSettings({ upiId: upi, payeeName: el.querySelector('#stName').value.trim(), whatsapp: '91' + wa }).then(function () {
+            closeSheet(); toast('Saved');
+          }, function (e) { undo(); err.textContent = errMsg(e); err.hidden = false; });
         };
+        if (Store.remote) {
+          el.querySelector('#stOut').onclick = function () { closeSheet(); Store.adminLogout(); render(); };
+          return;
+        }
         el.querySelector('#stReset').onclick = function () {
           confirmSheet({ title: 'Reset demo data?', text: 'All items and orders go back to the demo. Items you added are lost.', ok: 'Reset', danger: true }, function () {
             one = blankOne(); many = blankMany(); S.ticked = {}; Store.reset(); toast('Demo data reset');
@@ -345,7 +397,8 @@
 
   /* ---------- Stock ---------- */
   function vStock() {
-    var ps = Store.getProducts(), h = top(false) + '<h1>Stock</h1>';
+    var ps = Store.getProducts(), h = top(false) + '<h1>Stock</h1>', wait = Store.status();
+    if (!ps.length && !wait.loaded) return h + empty('box', wait.error === 'network' ? 'No connection. Trying again…' : 'Loading…');
     if (!ps.length) return h + empty('box', 'No items yet. Tap Add to post one.');
     h += '<div class="stack">';
     ps.forEach(function (p) {
@@ -355,7 +408,7 @@
         h += '<div class="card row-btn" role="button" tabindex="0" data-act="product" data-id="' + esc(p.id) + '">' + thumb(p.photos && p.photos[0]) +
           '<div class="body"><div class="nm2 l3">' + esc(shortName(p)) + '</div>' +
           '<div class="sub">' + (s ? '<b class="sz">' + esc(s.label) + '</b> · ' : '') + (q ? q + ' left' : '<span class="redtxt">Sold out</span>') + (hidden ? ' · Hidden' : '') + '</div></div>' +
-          (s ? '<button class="fb" data-act="' + (q ? 'sold' : 'add1') + '" data-id="' + esc(p.id) + '" data-s="' + esc(s.label) + '">' + (q ? 'Sold 1' : 'Add 1') + '</button>' : '') + '</div>';
+          (s ? '<button class="fb" data-act="' + (q ? 'sold' : 'add1') + '" data-id="' + esc(p.id) + '" data-s="' + esc(s.label) + '"' + busyAttr('stk:' + p.id + '|' + s.label) + '>' + (q ? 'Sold 1' : 'Add 1') + '</button>' : '') + '</div>';
       });
     });
     return h + '</div>';
@@ -366,16 +419,17 @@
     sheet('<div class="shead">' + thumb(p.photos && p.photos[0]) + '<div class="body"><h3>' + esc(pname(p)) + '</h3><div class="sub">' + (p.price == null ? 'No price · buyers ask' : money(p.price)) + (hidden ? ' · Hidden' : '') + '</div></div></div>' +
       '<div class="stack"><button class="btn sm" id="pPrice">Change price</button>' +
       '<button class="btn ghost sm" id="pHide">' + (hidden ? 'Show in shop' : 'Hide from shop') + '</button>' +
-      '<button class="btn ghost sm danger-link" id="pDel">Delete</button></div>',
+      '<button class="btn ghost sm danger-link" id="pDel">Delete</button></div><div class="err" id="sErr" hidden></div>',
       function (el) {
         el.querySelector('#pPrice').onclick = function () {
           inputSheet({ title: 'Price', value: p.price == null ? '' : String(p.price), numeric: true, ok: 'Save price', validate: function (v) { return +v > 0 ? '' : 'Enter the price'; },
-            extra: { label: 'No price · buyers ask', cb: function () { Store.saveProduct({ id: p.id, price: null }); toast('Price removed'); } } },
-          function (v) { Store.saveProduct({ id: p.id, price: +v }); toast('Price saved'); });
+            extra: { label: 'No price · buyers ask', cb: function () { return Store.saveProduct({ id: p.id, price: null }).then(function () { toast('Price removed'); }); } } },
+          function (v) { return Store.saveProduct({ id: p.id, price: +v }).then(function () { toast('Price saved'); }); });
         };
-        el.querySelector('#pHide').onclick = function () { Store.saveProduct({ id: p.id, active: hidden }); closeSheet(); toast(hidden ? 'Back in the shop' : 'Hidden from shop'); };
+        var hideBtn = el.querySelector('#pHide');
+        hideBtn.onclick = function () { if (!hideBtn.disabled) finish(hideBtn, Store.saveProduct({ id: p.id, active: hidden }).then(function () { toast(hidden ? 'Back in the shop' : 'Hidden from shop'); })); };
         el.querySelector('#pDel').onclick = function () {
-          confirmSheet({ title: 'Delete this item?', text: pname(p) + ' will be removed for good.', ok: 'Delete', danger: true }, function () { Store.deleteProduct(p.id); toast('Deleted'); });
+          confirmSheet({ title: 'Delete this item?', text: pname(p) + ' will be removed for good.', ok: 'Delete', danger: true }, function () { return Store.deleteProduct(p.id).then(function () { toast('Deleted'); }); });
         };
       });
   }
@@ -469,16 +523,23 @@
     h += busyHtml();
     h += '<label class="lbl" for="msg">Your message</label><textarea id="msg" class="msg" data-k="one" rows="4" autocapitalize="sentences">' + esc(one.msg) + '</textarea>';
     h += '<div id="oneOut">' + oneOut() + '</div>';
-    h += '<div class="actbar"><button class="btn" data-act="post1">Post</button></div>';
+    h += '<div class="actbar"><button class="btn" data-act="post1"' + busyAttr('post') + '>' + (S.busy.post ? 'Posting…' : 'Post') + '</button></div>';
     return h;
   }
   function postOne() {
+    if (S.busy.post) return;
     var it = parse(one.msg, one.fix);
     if (busy) return toast('Photos are still getting ready');
     if (!one.photos.length) return toast('Add a photo first');
     if (!it.name) return toast('Type the item name on the first line');
-    var p = Store.saveProduct(product(it, one.photos.map(function (x) { return x.src; }), function (s) { return one.qty[s] || 1; }));
-    if (!Store.getProduct(p.id)) return toast('Phone storage is full. Delete old items first.');
+    S.busy.post = true; render();
+    Store.saveProduct(product(it, one.photos.map(function (x) { return x.src; }), function (s) { return one.qty[s] || 1; })).then(function (p) {
+      S.busy.post = false;
+      if (!Store.getProduct(p.id)) { render(); return toast('Phone storage is full. Delete old items first.'); }
+      posted1(p);
+    }, function (e) { S.busy.post = false; render(); toast(errMsg(e)); });
+  }
+  function posted1(p) {
     var msg = one.msg.trim();
     one = blankOne(); render(); window.scrollTo(0, 0);
     var share = msg + '\n' + itemLink(p.id);
@@ -531,7 +592,7 @@
     }
     h += '<button class="link" data-act="backphotos" style="display:flex;align-items:center;gap:4px;text-decoration:none;margin:-8px 0 6px -4px">' + ic('back', 20) + 'Photos</button>';
     h += '<p class="hint">Type each message like on WhatsApp.</p><div class="stack">' + g.map(function (gr, i) { return itemRow(gr, i + 1); }).join('') + '</div>';
-    h += '<div class="actbar"><button class="btn" data-act="postmany">Post ' + plural(g.length, 'item', 'items') + '</button></div>';
+    h += '<div class="actbar"><button class="btn" data-act="postmany"' + busyAttr('post') + '>' + (S.busy.post ? 'Posting…' : 'Post ' + plural(g.length, 'item', 'items')) + '</button></div>';
     return h;
   }
   function toggleSplit(i) {
@@ -549,16 +610,27 @@
       var row = document.getElementById('row-' + g[miss[0]].key); if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    var posted = 0;
-    for (var i = 0; i < g.length; i++) {
-      var p = Store.saveProduct(product(items[i], g[i].photos.map(function (x) { return x.src; }), function () { return 1; }));
-      if (!Store.getProduct(p.id)) break;
-      posted++;
-    }
-    if (posted < g.length) {
-      var gone = g.slice(0, posted); gone.forEach(function (gr) { gr.photos.forEach(function (ph) { many.photos.splice(many.photos.indexOf(ph), 1); }); });
-      render(); toast((posted ? posted + ' posted. ' : '') + 'Phone storage is full. Delete old items first.'); return;
-    }
+    if (S.busy.post) return;
+    S.busy.post = true; render();
+    var posted = 0, why = '', chain = Promise.resolve();
+    g.forEach(function (gr, i) {
+      chain = chain.then(function () {
+        if (why) return;
+        return Store.saveProduct(product(items[i], gr.photos.map(function (x) { return x.src; }), function () { return 1; })).then(function (p) {
+          if (!Store.getProduct(p.id)) why = 'Phone storage is full. Delete old items first.'; else posted++;
+        }, function (e) { why = errMsg(e); });
+      });
+    });
+    chain.then(function () {
+      S.busy.post = false;
+      if (posted < g.length) {
+        var gone = g.slice(0, posted); gone.forEach(function (gr) { gr.photos.forEach(function (ph) { many.photos.splice(many.photos.indexOf(ph), 1); }); });
+        render(); toast((posted ? posted + ' posted. ' : '') + why); return;
+      }
+      postedMany(posted);
+    });
+  }
+  function postedMany(posted) {
     many = blankMany(); render(); window.scrollTo(0, 0);
     sheet('<div class="center"><div class="okic">' + ic('check', 34) + '</div><h3>' + plural(posted, 'item', 'items') + ' posted</h3><p>They are in your shop now.</p></div>' +
       '<div class="stack"><button class="btn" data-act="gostock">See stock</button><button class="btn ghost" data-act="close">Add more</button></div>');
@@ -567,10 +639,41 @@
   function vAdd() { return top(false) + '<h1>New item</h1>' + seg() + (S.addMode === 'one' ? vAddOne() : vAddMany()); }
 
   /* ---------- render ---------- */
+  /* ---------- passcode (real shop only) ---------- */
+  function locked() { return Store.remote && !Store.isAdmin(); }
+  function vLogin() {
+    return top(false) + '<h1>Enter passcode</h1>' +
+      '<form id="loginForm" novalidate><div class="field"><label class="lbl" for="pass">Passcode</label>' +
+      '<input class="inp" id="pass" type="password" autocomplete="current-password"' + (S.loginErr ? ' aria-invalid="true" aria-describedby="passErr"' : '') + '></div>' +
+      (S.loginErr ? '<div class="err" id="passErr" role="alert">' + esc(S.loginErr) + '</div>' : '') +
+      '<div class="stack" style="margin-top:16px"><button class="btn" type="submit"' + busyAttr('login') + '>' + (S.busy.login ? 'Checking…' : 'Open') + '</button></div></form>';
+  }
+  function login() {
+    if (S.busy.login) return;
+    if (!S.pass) { S.loginErr = 'Enter the passcode'; render(); return; }
+    S.busy.login = true; S.loginErr = ''; render();
+    Store.adminLogin(S.pass).then(function () {
+      S.busy.login = false; S.pass = ''; S.tab = 'orders'; render();
+    }, function (e) {
+      var c = e && e.code;
+      S.busy.login = false;
+      S.loginErr = c === 'wrong_passcode' ? 'Wrong passcode' : c === 'too_many_attempts' ? 'Too many wrong tries. Wait 15 minutes.'
+        : c === 'not_configured' ? 'No passcode set on the server yet.' : errMsg(e);
+      render(); var i = $('#pass'); if (i) i.focus();
+    });
+  }
+
   var VIEWS = { orders: vOrders, add: vAdd, stock: vStock };
   var pending = false;
   function render() {
     var y = window.scrollY, f = document.activeElement, fid = f && f.id, ss = f && f.selectionStart, se = f && f.selectionEnd;
+    $('.tabbar').hidden = locked();
+    if (locked()) {
+      $('#view').innerHTML = vLogin();
+      var pi = $('#pass'); pi.value = S.pass;
+      if (fid === 'pass') { pi.focus(); try { pi.setSelectionRange(ss, se); } catch (e) {} }
+      $('.app').classList.remove('has-act'); pending = false; badge(); return;
+    }
     $('#view').innerHTML = VIEWS[S.tab]();
     $('.app').classList.toggle('has-act', !!$('.actbar'));
     $('#toast').classList.toggle('up', !!$('.actbar'));
@@ -586,6 +689,7 @@
 
   Store.onChange(function () {
     badge();
+    if (locked() || $('#loginForm')) { if (!typing()) render(); else pending = true; return; }
     if (S.tab === 'add') return; // the add screen shows only the local draft
     if (pressing || typing() || sheetOpen()) { pending = true; return; }
     render();
@@ -603,7 +707,9 @@
     addFiles(e.target.files, S.addMode === 'one' ? one : many);
     setTimeout(function () { e.target.value = ''; }, 0);
   });
+  document.addEventListener('submit', function (e) { if (e.target.id === 'loginForm') { e.preventDefault(); login(); } });
   document.addEventListener('input', function (e) {
+    if (e.target.id === 'pass') { S.pass = e.target.value; return; }
     var t = e.target, k = t.dataset && t.dataset.k; if (!k) return;
     if (k === 'one') { one.msg = t.value; updateOne(); }
     else { many.msgs[k] = t.value; updateRow(k); }
@@ -626,8 +732,13 @@
       case 'product': openProduct(el.dataset.id); break;
       case 'sold': case 'add1':
         e.stopPropagation();
-        var pid = el.dataset.id, sz = el.dataset.s, d = a === 'sold' ? -1 : 1;
-        if (Store.adjustStock(pid, sz, d)) toast((d < 0 ? 'Sold 1 · ' : 'Added 1 · ') + sz, function () { Store.adjustStock(pid, sz, -d); });
+        var pid = el.dataset.id, sz = el.dataset.s, d = a === 'sold' ? -1 : 1, key = 'stk:' + pid + '|' + sz;
+        if (S.busy[key]) break;
+        S.busy[key] = true; el.disabled = true;
+        Store.adjustStock(pid, sz, d).then(function (ok) {
+          delete S.busy[key]; pending = true; flush();
+          if (ok) toast((d < 0 ? 'Sold 1 · ' : 'Added 1 · ') + sz, function () { Store.adjustStock(pid, sz, -d).catch(function (e) { toast(errMsg(e)); }); });
+        }, function (e) { delete S.busy[key]; pending = true; flush(); toast(errMsg(e)); });
         break;
       case 'mode': S.addMode = el.dataset.v; render(); break;
       case 'pick': $('#file').click(); break;

@@ -17,6 +17,7 @@
     form: {},               // details form values
     formErr: {},
     utr: '', utrErr: '', showUtr: false,
+    busy: '',               // 'buy' | 'details' | 'utr' while a request is on its way (blocks double taps)
     lastRoute: '',
   };
 
@@ -37,6 +38,22 @@
   function session() { const s = Store.getSession(); return s && s.phone ? s : null; }
   function hasDetails(s) { return !!(s && s.phone && s.name && s.address && s.pincode); }
   function products() { return Store.getProducts().filter(p => p.active); }
+
+  /* ---------- waiting for the server (real shop only; demo answers at once) ---------- */
+  function busyAttr(key) { return state.busy === key ? ' disabled aria-busy="true"' : ''; }
+  function busyLabel(key, label) { return state.busy === key ? 'Please wait…' : label; }
+  function errText(e) {
+    const c = e && e.code;
+    return c === 'network' ? 'No connection. Please try again.'
+      : c === 'busy' ? 'The shop is busy. Please try again.'
+        : 'Something went wrong. Please try again.';
+  }
+  // while the first load is on its way, or it failed with nothing saved on this phone
+  function waiting(what) {
+    const st = Store.status();
+    if (what === 'orders' ? st.ordersLoaded : st.loaded) return '';
+    return st.error === 'network' ? 'No connection. Trying again…' : 'Loading…';
+  }
 
   const SIZE_ORDER = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
   function sizeKey(l) {
@@ -167,7 +184,7 @@
       '<span class="cat-img">' + (c.img ? '<img src="' + esc(c.img) + '" alt="">' : '') + '</span><span class="cat-name">' + esc(c.name) + '</span></button>').join('') + '</div>' : '') +
       sizeRow +
       (list.length ? '<div class="grid">' + list.map(card).join('') + '</div>'
-        : all.length ? empty('Nothing in this size right now.') : empty('New stock is coming soon.'));
+        : all.length ? empty('Nothing in this size right now.') : empty(waiting('products') || 'New stock is coming soon.'));
     return page(r, body, { tabbar: true, cls: 'shop' });
   }
 
@@ -185,6 +202,7 @@
 
   function viewProduct(r) {
     const p = Store.getProduct(r.id);
+    if (!p && waiting('products')) return page(r, empty(waiting('products')), { back: true, tabbar: true });
     if (!p || !p.active) return page(r, empty('This item is no longer available.', '#/', 'Back to shop'), { back: true, tabbar: true });
 
     const total = Store.totalQty(p);
@@ -210,7 +228,7 @@
     } else {
       actions = '<a class="btn btn-icon" href="' + waHref('Hi, I have a question about ' + fullName(p) + sizeTxt + '.') + '" target="_blank" rel="noopener" aria-label="Ask on WhatsApp">' + ic('wa') + '</a>' +
         (total === 0 ? '<button class="btn btn-dark" disabled>Sold out</button>'
-          : '<button class="btn btn-dark" data-act="buy" data-id="' + esc(p.id) + '">Buy now</button>');
+          : '<button class="btn btn-dark" data-act="buy" data-id="' + esc(p.id) + '"' + busyAttr('buy') + '>' + busyLabel('buy', 'Buy now') + '</button>');
     }
 
     const body = '<div class="pd">' + gallery(p) +
@@ -228,6 +246,7 @@
   }
 
   function buy(id) {
+    if (state.busy) return;
     const p = Store.getProduct(id); if (!p) return;
     const size = state.sel[id];
     if (!size || sizeQty(p, size) <= 0) { state.sizeErr = id; render(); return; }
@@ -238,14 +257,20 @@
   }
 
   function placeOrder(item, ses) {
-    const res = Store.createOrder({ items: [{ productId: item.productId, size: item.size, qty: 1 }], customer: { name: ses.name, phone: ses.phone, address: ses.address, pincode: ses.pincode } });
-    setPending(null);
-    if (res.error) {
-      toast(res.error === 'out_of_stock' ? 'Sorry, size ' + item.size + ' just sold out.' : 'Please ask the price on WhatsApp.');
-      go('#/p/' + encodeURIComponent(item.productId), true);
-      return;
-    }
-    go('#/pay/' + encodeURIComponent(res.order.id), true);
+    state.busy = route().name === 'details' ? 'details' : 'buy'; render();
+    Store.createOrder({ items: [{ productId: item.productId, size: item.size, qty: 1 }], customer: { name: ses.name, phone: ses.phone, address: ses.address, pincode: ses.pincode } }).then(res => {
+      state.busy = '';
+      setPending(null);
+      if (res.error) {
+        toast(res.error === 'out_of_stock' ? 'Sorry, size ' + item.size + ' just sold out.' : 'Please ask the price on WhatsApp.');
+        go('#/p/' + encodeURIComponent(item.productId), true);
+        return;
+      }
+      go('#/pay/' + encodeURIComponent(res.order.id), true);
+    }, err => {
+      // stay on this screen with everything as it was
+      state.busy = ''; render(); toast(errText(err));
+    });
   }
 
   // saved address, with the PIN code added back if it was stored separately
@@ -266,12 +291,13 @@
       '<label class="field"><span>Name</span><input id="f-name" data-model="name" value="' + esc(v('name')) + '" autocomplete="name"' + desc('name') + '>' + err('name') + '</label>' +
       '<label class="field"><span>Mobile number</span><input id="f-phone" data-model="phone" value="' + esc(v('phone')) + '" type="tel" inputmode="numeric" autocomplete="tel-national" maxlength="10"' + desc('phone') + '>' + err('phone') + '</label>' +
       '<label class="field"><span>Address with PIN code</span><textarea id="f-address" data-model="address" rows="3" autocomplete="street-address"' + desc('address') + '>' + esc(v('address')) + '</textarea>' + err('address') + '</label>' +
-      '<button class="btn btn-dark" type="submit">' + (state.pending ? 'Continue' : 'Save') + '</button>' +
+      '<button class="btn btn-dark" type="submit"' + busyAttr('details') + '>' + busyLabel('details', state.pending ? 'Continue' : 'Save') + '</button>' +
       '</form>';
     return page(r, body, { back: true, cls: 'details' });
   }
 
   function saveDetails() {
+    if (state.busy) return;
     const ses = Store.getSession() || {};
     const f = state.form;
     const val = k => String(f[k] !== undefined ? f[k] : k === 'address' ? sesAddress(ses) : (ses[k] || '')).trim();
@@ -310,7 +336,7 @@
 
   function viewPay(r) {
     const o = Store.getOrder(r.id);
-    if (!o) return page(r, empty('Order not found.', '#/orders', 'My orders'), { back: true, tabbar: true });
+    if (!o) return page(r, waiting('orders') ? empty(waiting('orders')) : empty('Order not found.', '#/orders', 'My orders'), { back: true, tabbar: true });
     if (o.status !== 'awaiting_payment') { setTimeout(() => go('#/order/' + encodeURIComponent(o.id), true), 0); return ''; }
     const link = Store.upiLink(o);
     const body = '<div class="narrow pay">' + orderLine(o) +
@@ -319,7 +345,7 @@
       '<a class="btn btn-dark" href="' + esc(link) + '">Pay with UPI app</a>' +
       '<div class="qr-box"><div id="qr" data-link="' + esc(link) + '"></div><span class="qr-cap">Or scan with any UPI app</span></div>' +
       '<form class="form" data-form="utr" data-id="' + esc(o.id) + '" novalidate>' + utrField('UPI reference, after paying') +
-      '<button class="btn btn-line" type="submit">I have paid</button></form>' +
+      '<button class="btn btn-line" type="submit"' + busyAttr('utr') + '>' + busyLabel('utr', 'I have paid') + '</button></form>' +
       '<a class="quiet-link" href="' + waHref('Hi, I need help paying for order ' + o.id + '.') + '" target="_blank" rel="noopener">' + ic('wa') + 'Help on WhatsApp</a>' +
       '</div>';
     return page(r, body, { back: true, cls: 'pay-page' });
@@ -341,17 +367,24 @@
   }
 
   function submitUtr(id) {
-    const res = Store.submitUtr(id, state.utr);
-    if (res.error) {
-      state.utrErr = res.error === 'invalid' ? 'Please enter all 12 digits'
-        : res.error === 'duplicate' ? 'This reference is already used. Please check it.'
-          : 'Something went wrong. Please try again.';
+    if (state.busy) return;
+    const showErr = msg => {
+      state.utrErr = msg;
       render();
       const f = document.getElementById('f-utr'); if (f) f.focus();
-      return;
-    }
-    state.utr = ''; state.utrErr = ''; state.showUtr = false;
-    if (route().name === 'pay') go('#/order/' + encodeURIComponent(id), true); else render();
+    };
+    state.busy = 'utr'; render();
+    Store.submitUtr(id, state.utr).then(res => {
+      state.busy = '';
+      if (res.error) {
+        showErr(res.error === 'invalid' ? 'Please enter all 12 digits'
+          : res.error === 'duplicate' ? 'This reference is already used. Please check it.'
+            : 'Something went wrong. Please try again.');
+        return;
+      }
+      state.utr = ''; state.utrErr = ''; state.showUtr = false;
+      if (route().name === 'pay') go('#/order/' + encodeURIComponent(id), true); else render();
+    }, err => { state.busy = ''; showErr(errText(err)); });
   }
 
   /* ---------- 5. My orders ---------- */
@@ -372,7 +405,7 @@
           '<div class="ocard-txt"><div class="name">' + esc(i.title || '') + '</div>' +
           '<div class="meta"><b class="price">' + money(o.amount) + '</b> · Size ' + esc(i.size || '') + '</div>' + pill(o) + '</div>' + ic('next', 'chev') + '</a>';
       }).join('') + '</div>'
-        : empty('No orders on this phone yet.', '#/', 'Go to shop')) +
+        : ses && waiting('orders') ? empty(waiting('orders')) : empty('No orders on this phone yet.', '#/', 'Go to shop')) +
       '</div>';
     return page(r, body, { tabbar: true, cls: 'orders' });
   }
@@ -417,7 +450,7 @@
 
   function viewOrder(r) {
     const o = Store.getOrder(r.id);
-    if (!o) return page(r, empty('Order not found.', '#/orders', 'My orders'), { back: true, tabbar: true });
+    if (!o) return page(r, waiting('orders') ? empty(waiting('orders')) : empty('Order not found.', '#/orders', 'My orders'), { back: true, tabbar: true });
     const s = statusInfo(o);
     const tone = o.status === 'verifying' && o.stockIssue ? 'warn' : (TONE[o.status] || 'muted');
     const body = '<div class="narrow status">' +
@@ -426,7 +459,7 @@
       '<div class="st-amount"><span>Amount</span><b>' + money(o.amount) + '</b></div>' +
       (s.extra || '') +
       (s.reveal ? '<button class="btn btn-line" data-act="show-utr">Already paid? Enter reference</button>' : '') +
-      (s.utr ? '<form class="form" data-form="utr" data-id="' + esc(o.id) + '" novalidate>' + utrField('UPI reference') + '<button class="btn btn-dark" type="submit">' + esc(s.utr) + '</button></form>' : '') +
+      (s.utr ? '<form class="form" data-form="utr" data-id="' + esc(o.id) + '" novalidate>' + utrField('UPI reference') + '<button class="btn btn-dark" type="submit"' + busyAttr('utr') + '>' + esc(busyLabel('utr', s.utr)) + '</button></form>' : '') +
       helpBtn('Hi, I need help with my order ' + o.id + '.') +
       '</div>';
     return page(r, body, { back: true, tabbar: true, cls: 'order' });
@@ -514,6 +547,7 @@
   document.addEventListener('submit', e => {
     const f = e.target.closest('form[data-form]'); if (!f) return;
     e.preventDefault();
+    if (state.busy) return;
     if (f.dataset.form === 'details') saveDetails();
     if (f.dataset.form === 'utr') submitUtr(f.dataset.id);
   });
