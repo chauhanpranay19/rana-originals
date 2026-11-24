@@ -134,7 +134,7 @@
   function fmtPhone(p) { var t = tenDigits(p); return t.length === 10 ? t.slice(0, 5) + ' ' + t.slice(5) : p; }
   function groupUtr(u) { return String(u || '').replace(/(\d{4})(?=\d)/g, '$1 '); }
   function waTo(phone, text) { return 'https://wa.me/91' + tenDigits(phone) + '?text=' + encodeURIComponent(text); }
-  function itemLink(id) { try { return new URL('../shop/index.html#/p/' + encodeURIComponent(id), location.href).href; } catch (e) { return ''; } }
+  function itemLink(id) { try { return new URL('../#/p/' + encodeURIComponent(id), location.href).href; } catch (e) { return ''; } }
   function pname(p) { return ((p.brand ? p.brand + ' ' : '') + (p.title || '')).trim(); }
   /* short name for narrow rows: drop the brand, then filler words, when the full name is long */
   function shortName(p) {
